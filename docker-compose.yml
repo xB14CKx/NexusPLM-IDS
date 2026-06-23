@@ -1,0 +1,18 @@
+version: "3.9"
+services:
+  ids:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - IDS_API_KEY=change-me-secret
+    volumes:
+      - ./GeoLite2-City.mmdb:/ids/GeoLite2-City.mmdb:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped

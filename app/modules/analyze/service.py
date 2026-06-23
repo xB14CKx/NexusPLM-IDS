@@ -1,0 +1,20 @@
+from app.modules.analyze.model import AnalyzeRequest
+from app.modules.core.models import RiskScore
+from app.modules.core.alert import aggregate, maybe_alert
+from app.modules.detection import signatures, behavioral
+from app.modules.ids.controller import store_threat
+
+
+async def analyze(req: AnalyzeRequest) -> RiskScore:
+    threats = signatures.scan(
+        request_id=req.request_id, ip=req.ip, user_id=req.user_id,
+        user_agent=req.user_agent, path=req.path,
+        query=req.query_string, body=req.body,
+    )
+    threats += await behavioral.check_rate_limit(req.request_id, req.ip, req.user_id)
+
+    risk = aggregate(req.ip, req.user_id, threats)
+    for t in risk.threats:
+        await store_threat(t)
+    await maybe_alert(risk)
+    return risk
