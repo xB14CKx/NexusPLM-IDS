@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     brute_force_max: int = 5
     brute_force_window: int = 300
 
+    # IPS settings
+    ips_enabled: bool = True
+    ips_auto_block_ttl: int = 3600  # seconds; 0 = permanent
+
     model_config = {"env_file": ".env"}
 
 
