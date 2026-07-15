@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     alert_email_to: str = ""
 
+    # Email resolution links
+    # Base URL of this IDS service reachable from your email client (no trailing slash)
+    # e.g. https://ids.example.com or http://localhost:8000
+    resolution_base_url: str = "http://localhost:8000"
+    # Token expiry in seconds (default 24 hours)
+    resolution_token_ttl: int = 86400
+
     model_config = {"env_file": ".env"}
 
 
