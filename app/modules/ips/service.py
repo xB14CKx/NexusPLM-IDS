@@ -79,7 +79,13 @@ async def list_blocks() -> IpsBlockListResponse:
 
 
 async def auto_block(ip: str, reason: str) -> None:
-    """Called automatically when the IDS decides BLOCK. Respects ips_enabled setting."""
+    """Called automatically when the IDS decides BLOCK. Respects ips_enabled setting.
+    Private, loopback, and link-local IPs are never auto-blocked — blocking them
+    would lock out everyone sharing that internal address (e.g. entire LAN behind NAT).
+    """
     if not get_settings().ips_enabled:
+        return
+    from app.modules.core.ip_utils import is_private_ip
+    if is_private_ip(ip):
         return
     await block_ip(ip, reason=reason)

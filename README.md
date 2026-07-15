@@ -1,20 +1,22 @@
-# NexusPLM IDS
+# NexusPLM IDS/IPS
 
-FastAPI intrusion detection service that sits alongside your C# + React NexusPLM application.
+FastAPI intrusion detection **and prevention** service that sits alongside your C# + React NexusPLM application.
 
 ## Features
 
-| Layer | What it detects |
+| Layer | What it detects / does |
 |---|---|
 | **Signature** | SQL injection, XSS, path traversal, known-bad IPs / attack-tool user-agents |
 | **Behavioral** | Rate limiting, brute-force login, unusual login hours (off UTC 06–22) |
 | **Geo-jump** | Country change within 1 hour for the same user |
 | **Sequence** | Suspicious audit chains — e.g. Login → ExportBOM → Logout in ≤30 s |
+| **IPS** | Auto-blocks offending IPs on BLOCK decision; TTL-based expiry; manual block/unblock |
+| **Email alerts** | Sends an email on every ALERT or BLOCK event via SMTP |
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # edit IDS_API_KEY and thresholds
+cp .env.example .env          # edit IDS_API_KEY, SMTP credentials, and thresholds
 docker compose up --build
 ```
 
@@ -24,9 +26,19 @@ The service is now listening on **http://localhost:8000**.
 
 ---
 
-## C# integration
+## How IPS works
 
-Add a typed HTTP client in your C# backend and call the IDS on every request and every audit event.
+When the IDS scores a request or audit event as `BLOCK`, the offending IP is **automatically added to the IPS block list** in Redis. All subsequent requests from that IP are rejected immediately — before any scoring — via a single Redis lookup.
+
+Blocks expire after `IPS_AUTO_BLOCK_TTL` seconds (default 1 hour). Set to `0` for permanent blocks.
+
+The C# middleware performs a **two-stage check**:
+1. Fast IPS pre-check (`GET /ips/blocks/{ip}/check`) — single Redis lookup, no scoring
+2. Full IDS analysis (`POST /analyze`) — only runs if the IP is not already blocked
+
+---
+
+## C# integration
 
 ### 1. Analyze an incoming request
 
@@ -36,15 +48,13 @@ Add a typed HTTP client in your C# backend and call the IDS on every request and
 
 var payload = new {
     request_id  = Guid.NewGuid().ToString(),
-    user_id     = currentUserId,       // null if anonymous
-    session_id  = httpContext.Session.Id,
+    user_id     = currentUserId,
     ip          = remoteIp,
     user_agent  = request.Headers["User-Agent"].ToString(),
     method      = request.Method,
     path        = request.Path.Value,
     query_string= request.QueryString.Value,
-    body        = await ReadBodyAsync(request),  // string
-    headers     = request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString()),
+    body        = await ReadBodyAsync(request),
     timestamp   = DateTimeOffset.UtcNow
 };
 
@@ -57,12 +67,11 @@ if (risk.action == "BLOCK")
 
 ```csharp
 // POST https://ids-host:8000/audit/ingest
-// Call this whenever a significant action occurs (login, export, delete, etc.)
 
 var entry = new {
     event_id  = Guid.NewGuid().ToString(),
     user_id   = currentUserId,
-    action    = "EXPORT_BOM",        // see action vocabulary below
+    action    = "EXPORT_BOM",
     resource  = $"BOM/{bomId}",
     ip        = remoteIp,
     timestamp = DateTimeOffset.UtcNow,
@@ -87,7 +96,7 @@ if (risk.action == "BLOCK")
   "ip": "1.2.3.4",
   "user_id": "u-123",
   "total_score": 85,
-  "action": "BLOCK",          // ALLOW | ALERT | BLOCK
+  "action": "BLOCK",
   "threats": [
     {
       "threat_type": "SUSPICIOUS_SEQUENCE",
@@ -106,13 +115,19 @@ if (risk.action == "BLOCK")
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/analyze` | Analyze a forwarded HTTP request |
+| `POST` | `/analyze` | Analyze a forwarded HTTP request (IPS pre-check included) |
 | `POST` | `/audit/ingest` | Ingest an audit log entry |
-| `POST` | `/ips/blacklist?ip=1.2.3.4` | Add IP to in-memory blacklist |
-| `DELETE` | `/ips/blacklist?ip=1.2.3.4` | Remove IP from blacklist |
+| `GET` | `/ids/threats` | List recent threat events |
+| `GET` | `/ips/blocks` | List all active IPS blocks |
+| `POST` | `/ips/blocks` | Manually block an IP (`{ "ip", "reason", "ttl" }`) |
+| `DELETE` | `/ips/blocks/{ip}` | Unblock an IP |
+| `GET` | `/ips/blocks/{ip}/check` | Fast check: is this IP currently blocked? |
+| `GET` | `/ips/blacklist` | List signature-based blacklisted IPs |
+| `POST` | `/ips/blacklist` | Add IP to signature blacklist |
+| `DELETE` | `/ips/blacklist` | Remove IP from signature blacklist |
 | `GET` | `/health` | Health check |
 
-All write endpoints require `X-IDS-API-Key` header.
+All endpoints (except `/health`) require `X-IDS-API-Key` header.
 
 Interactive docs: **http://localhost:8000/docs**
 
@@ -123,10 +138,20 @@ Interactive docs: **http://localhost:8000/docs**
 | Variable | Default | Description |
 |---|---|---|
 | `IDS_API_KEY` | `change-me-secret` | Shared secret with C# backend |
-| `REDIS_URL` | `redis://localhost:6379` | Redis for counters & sequence buffers |
+| `REDIS_URL` | `redis://localhost:6379` | Redis for counters, sequence buffers & IPS blocks |
 | `GEOIP_DB_PATH` | `./GeoLite2-City.mmdb` | MaxMind DB path |
 | `RISK_BLOCK_THRESHOLD` | `80` | Score ≥ this → BLOCK |
-| `RISK_ALERT_THRESHOLD` | `50` | Score ≥ this → ALERT + webhook |
-| `ALERT_WEBHOOK_URL` | _(empty)_ | Webhook for ALERT/BLOCK events |
+| `RISK_ALERT_THRESHOLD` | `50` | Score ≥ this → ALERT |
+| `ALERT_WEBHOOK_URL` | _(empty)_ | Webhook URL for ALERT/BLOCK events |
 | `RATE_LIMIT_MAX_REQUESTS` | `100` | Requests per `RATE_LIMIT_WINDOW` seconds |
 | `BRUTE_FORCE_MAX` | `5` | Failed logins before brute-force flag |
+| `IPS_ENABLED` | `true` | Enable/disable automatic IP blocking |
+| `IPS_AUTO_BLOCK_TTL` | `3600` | Block duration in seconds (`0` = permanent) |
+| `SMTP_HOST` | _(empty)_ | SMTP server hostname (e.g. `smtp.gmail.com`) |
+| `SMTP_PORT` | `587` | SMTP port (STARTTLS) |
+| `SMTP_USER` | _(empty)_ | SMTP login username |
+| `SMTP_PASSWORD` | _(empty)_ | SMTP password / app password |
+| `SMTP_FROM` | _(empty)_ | Sender address |
+| `ALERT_EMAIL_TO` | _(empty)_ | Recipient address for alert emails |
+
+> **Gmail users:** generate an [App Password](https://myaccount.google.com/apppasswords) and use it as `SMTP_PASSWORD`. Do not use your regular Gmail password.

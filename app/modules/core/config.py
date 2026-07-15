@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     ips_enabled: bool = True
     ips_auto_block_ttl: int = 3600  # seconds; 0 = permanent
 
+    # Email alert settings
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    alert_email_to: str = ""
+
     model_config = {"env_file": ".env"}
 
 
