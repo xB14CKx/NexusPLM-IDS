@@ -4,6 +4,7 @@ from app.modules.core.alert import aggregate, maybe_alert
 from app.modules.detection import behavioral, sequences
 from app.modules.ids.controller import store_threat
 from app.modules.ips.service import auto_block
+import asyncio
 
 
 async def ingest(entry: AuditEntry) -> RiskScore:
@@ -15,8 +16,13 @@ async def ingest(entry: AuditEntry) -> RiskScore:
     risk = aggregate(entry.ip, entry.user_id, threats)
     for t in risk.threats:
         await store_threat(t)
-    await maybe_alert(risk)
+
+    # Block first — never let email delay the IPS action
     if risk.action == "BLOCK":
         reason = risk.threats[0].threat_type if risk.threats else "high_risk_score"
         await auto_block(risk.ip, reason=reason)
+
+    # Fire alert in the background so slow SMTP never blocks the response
+    asyncio.ensure_future(maybe_alert(risk))
+
     return risk

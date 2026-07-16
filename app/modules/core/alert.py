@@ -171,6 +171,7 @@ async def _send_email(risk: RiskScore) -> None:
             username=s.smtp_user,
             password=s.smtp_password,
             start_tls=True,
+            timeout=10,
         )
         logger.info("Alert email sent to %s (action=%s ip=%s)", s.alert_email_to, risk.action, risk.ip)
     except Exception as exc:
