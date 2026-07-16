@@ -1,11 +1,14 @@
 """Aggregates threat scores → RiskScore, fires optional webhook alert and email notification."""
 from __future__ import annotations
 import httpx
+import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import aiosmtplib
 from app.modules.core.models import ThreatEvent, RiskScore
 from app.modules.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def aggregate(ip: str, user_id: str | None, threats: list[ThreatEvent]) -> RiskScore:
@@ -24,14 +27,16 @@ async def maybe_alert(risk: RiskScore) -> None:
     if risk.action == "ALLOW":
         return
     s = get_settings()
+    logger.info("Firing alert: action=%s ip=%s score=%s", risk.action, risk.ip, risk.total_score)
 
     # Webhook
     if s.alert_webhook_url:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 await client.post(s.alert_webhook_url, json=risk.model_dump(mode="json"))
-        except Exception:
-            pass
+            logger.info("Webhook delivered to %s", s.alert_webhook_url)
+        except Exception as exc:
+            logger.warning("Webhook delivery failed: %s", exc)
 
     # Email
     await _send_email(risk)
@@ -39,7 +44,13 @@ async def maybe_alert(risk: RiskScore) -> None:
 
 async def _send_email(risk: RiskScore) -> None:
     s = get_settings()
-    if not all([s.smtp_host, s.smtp_user, s.smtp_password, s.smtp_from, s.alert_email_to]):
+    missing = [k for k, v in {
+        "SMTP_HOST": s.smtp_host, "SMTP_USER": s.smtp_user,
+        "SMTP_PASSWORD": s.smtp_password, "SMTP_FROM": s.smtp_from,
+        "ALERT_EMAIL_TO": s.alert_email_to,
+    }.items() if not v]
+    if missing:
+        logger.warning("Email alert skipped — missing config: %s", ", ".join(missing))
         return
 
     # Generate signed single-use action tokens
@@ -161,5 +172,6 @@ async def _send_email(risk: RiskScore) -> None:
             password=s.smtp_password,
             start_tls=True,
         )
-    except Exception:
-        pass
+        logger.info("Alert email sent to %s (action=%s ip=%s)", s.alert_email_to, risk.action, risk.ip)
+    except Exception as exc:
+        logger.error("Failed to send alert email to %s: %s", s.alert_email_to, exc)

@@ -1,12 +1,14 @@
 """IPS service: Redis-backed auto-block/unblock with optional TTL."""
 from __future__ import annotations
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from app.modules.core.redis import get_redis
 from app.modules.core.config import get_settings
 from app.modules.ips.model import IpsBlock, IpsBlockResponse, IpsBlockListResponse
 
 _BLOCK_KEY = "ips:blocks"         # Redis hash  ip → json(IpsBlock)
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -84,8 +86,12 @@ async def auto_block(ip: str, reason: str) -> None:
     would lock out everyone sharing that internal address (e.g. entire LAN behind NAT).
     """
     if not get_settings().ips_enabled:
+        logger.warning("auto_block skipped for %s — IPS_ENABLED is false", ip)
         return
     from app.modules.core.ip_utils import is_private_ip
     if is_private_ip(ip):
+        logger.warning("auto_block skipped for %s — IP is private/reserved", ip)
         return
+    logger.info("auto_block: blocking %s reason=%s", ip, reason)
     await block_ip(ip, reason=reason)
+    logger.info("auto_block: %s successfully added to block list", ip)
