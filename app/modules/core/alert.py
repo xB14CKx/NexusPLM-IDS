@@ -44,13 +44,14 @@ async def maybe_alert(risk: RiskScore) -> None:
 
 async def _send_email(risk: RiskScore) -> None:
     s = get_settings()
-    missing = [k for k, v in {
-        "SMTP_HOST": s.smtp_host, "SMTP_USER": s.smtp_user,
-        "SMTP_PASSWORD": s.smtp_password, "SMTP_FROM": s.smtp_from,
+
+    # Need at minimum a sender and recipient regardless of transport
+    missing_base = [k for k, v in {
+        "SMTP_FROM": s.smtp_from,
         "ALERT_EMAIL_TO": s.alert_email_to,
     }.items() if not v]
-    if missing:
-        logger.warning("Email alert skipped — missing config: %s", ", ".join(missing))
+    if missing_base:
+        logger.warning("Email alert skipped — missing config: %s", ", ".join(missing_base))
         return
 
     # Generate signed single-use action tokens
@@ -156,8 +157,49 @@ async def _send_email(risk: RiskScore) -> None:
 </body>
 </html>"""
 
+    subject = f"[NexusPLM IDS] {risk.action} — {risk.ip} (score {risk.total_score})"
+
+    if s.resend_api_key:
+        await _send_via_resend(s, subject, plain, html)
+    else:
+        await _send_via_smtp(s, subject, plain, html)
+
+
+async def _send_via_resend(s, subject: str, plain: str, html: str) -> None:
+    payload = {
+        "from": s.smtp_from,
+        "to": [s.alert_email_to],
+        "subject": subject,
+        "text": plain,
+        "html": html,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {s.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+        logger.info("Alert email sent via Resend to %s", s.alert_email_to)
+    except Exception as exc:
+        logger.error("Failed to send alert email via Resend: %s", exc)
+
+
+async def _send_via_smtp(s, subject: str, plain: str, html: str) -> None:
+    missing = [k for k, v in {
+        "SMTP_HOST": s.smtp_host, "SMTP_USER": s.smtp_user,
+        "SMTP_PASSWORD": s.smtp_password,
+    }.items() if not v]
+    if missing:
+        logger.warning("SMTP email skipped — missing config: %s", ", ".join(missing))
+        return
+
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"[NexusPLM IDS] {risk.action} — {risk.ip} (score {risk.total_score})"
+    msg["Subject"] = subject
     msg["From"] = s.smtp_from
     msg["To"] = s.alert_email_to
     msg.attach(MIMEText(plain, "plain"))
@@ -173,6 +215,6 @@ async def _send_email(risk: RiskScore) -> None:
             start_tls=True,
             timeout=10,
         )
-        logger.info("Alert email sent to %s (action=%s ip=%s)", s.alert_email_to, risk.action, risk.ip)
+        logger.info("Alert email sent via SMTP to %s", s.alert_email_to)
     except Exception as exc:
-        logger.error("Failed to send alert email to %s: %s", s.alert_email_to, exc)
+        logger.error("Failed to send alert email via SMTP to %s: %s", s.alert_email_to, exc)

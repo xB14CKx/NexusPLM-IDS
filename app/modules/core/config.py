@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     ips_auto_block_ttl: int = 3600  # seconds; 0 = permanent
 
     # Email alert settings
+    # Set RESEND_API_KEY to use Resend HTTP API (recommended on Render / cloud).
+    # If blank, falls back to SMTP via aiosmtplib.
+    resend_api_key: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
