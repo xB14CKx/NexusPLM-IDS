@@ -38,7 +38,7 @@ async def check_brute_force(event_id: str, ip: str, user_id: str, action: str) -
             event_id=event_id, ip=ip, user_id=user_id,
             threat_type="BRUTE_FORCE", severity=Severity.HIGH,
             detail=f"{count} failed logins in {s.brute_force_window}s",
-            score=75,
+            score=80,
         )]
     return []
 
