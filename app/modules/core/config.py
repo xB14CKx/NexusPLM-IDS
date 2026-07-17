@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # IPS settings
     ips_enabled: bool = True
-    ips_auto_block_ttl: int = 3600  # seconds; 0 = permanent
+    ips_auto_block_ttl: int = 0  # seconds; 0 = permanent
 
     # Email alert settings
     # Set RESEND_API_KEY to use Resend HTTP API (recommended on Render / cloud).
