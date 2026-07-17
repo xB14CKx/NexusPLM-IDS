@@ -5,6 +5,9 @@ from app.modules.detection import signatures, behavioral
 from app.modules.ids.controller import store_threat
 from app.modules.ips.service import auto_block
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def analyze(req: AnalyzeRequest) -> RiskScore:
@@ -18,6 +21,20 @@ async def analyze(req: AnalyzeRequest) -> RiskScore:
     risk = aggregate(req.ip, req.user_id, threats)
     for t in risk.threats:
         await store_threat(t)
+
+    logger.info(
+        "IDS decision",
+        extra={
+            "request_id": req.request_id,
+            "ip": req.ip,
+            "user_id": req.user_id,
+            "method": req.method,
+            "path": req.path,
+            "action": risk.action,
+            "score": risk.total_score,
+            "threats": [{"type": t.threat_type, "severity": t.severity, "score": t.score} for t in risk.threats],
+        },
+    )
 
     # Block first — never let email delay the IPS action
     if risk.action == "BLOCK":

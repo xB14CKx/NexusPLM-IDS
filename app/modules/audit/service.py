@@ -5,6 +5,9 @@ from app.modules.detection import behavioral, sequences
 from app.modules.ids.controller import store_threat
 from app.modules.ips.service import auto_block
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def ingest(entry: AuditEntry) -> RiskScore:
@@ -16,6 +19,19 @@ async def ingest(entry: AuditEntry) -> RiskScore:
     risk = aggregate(entry.ip, entry.user_id, threats)
     for t in risk.threats:
         await store_threat(t)
+
+    logger.info(
+        "Audit decision",
+        extra={
+            "event_id": entry.event_id,
+            "ip": entry.ip,
+            "user_id": entry.user_id,
+            "action": risk.action,
+            "audit_action": entry.action,
+            "score": risk.total_score,
+            "threats": [{"type": t.threat_type, "severity": t.severity, "score": t.score} for t in risk.threats],
+        },
+    )
 
     # Block first — never let email delay the IPS action
     if risk.action == "BLOCK":
